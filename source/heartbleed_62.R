@@ -1,0 +1,178 @@
+library(Rcpp)
+library(dplyr)
+library(ggplot2)
+
+heartbleed <- function(seed) {
+  
+  set.seed(seed)
+  
+  sys_id <- "62"
+  sys_name <- "heartbleed"
+  
+  prefix <- paste0(sys_name, "_", sys_id, "_")
+  fname <- paste0(prefix, seed, ".png")
+  output <- here::here("image", paste0("sys_", sys_id), fname)
+  
+  
+  # sample palette from the colorir package
+  sample_shades <- function(scramble = TRUE) {
+    pal <- sample(colorir::colores$palette_name, 1)
+    shades <- colorir::colores$colour[
+      colorir::colores$palette_name == pal
+    ]
+    if(scramble) shades <- sample(shades)
+    return(shades)
+  }
+  
+  # interpolate colours
+  mix_shades <- function(shades, n) {
+    (colorRampPalette(shades))(n)
+  }
+  
+  # create two separate colour vectors
+  ncols <- 1000
+  palette <- sample_shades()
+  palette_base <- mix_shades(palette[1:2], ncols)
+  palette_heart <- mix_shades(palette[3:4], ncols)
+  
+  # other parameters
+  heart_size <- runif(1, min = .2, max = .5)
+  n_slices <- sample(10:15, 1)
+  shift <- c(.3, .4)
+  
+  
+  
+  # start -------------------------------------------------------------------
+  
+  
+  grains_high <- 1250
+  grains_wide <- 1250
+  
+  pixels_high <- grains_high * 4
+  pixels_wide <- grains_wide * 4
+  
+  
+  
+  # turmite background ------------------------------------------------------
+  
+  cat("turmite wandering...\n")
+  
+  # define the turmite() function
+  sourceCpp(here::here("source", paste0("turmite.cpp")))
+  
+  nsteps <- 10000000
+  ss <- 3
+  
+  # create long grid for the raster with appropriate aspect ratio
+  ar <- grains_high / grains_wide
+  raster <- ambient::long_grid(
+    x = seq(0, 1,  length.out = grains_wide), 
+    y = seq(0, ar, length.out = grains_high)
+  )
+  
+  grid <- t(turmite(grains_wide, grains_high, nsteps, ss))
+  inds <- 1 + ceiling(ncols * grid/nsteps)
+  raster$shade <- palette_base[inds]
+  
+  
+  
+  # generate dust heart ------------------------------------------------------
+  
+  cat("dust heart beating...\n")
+  
+  dat <- jasmines::use_seed(seed) %>%
+    jasmines::entity_heart(
+      grain = 1000, 
+      size = heart_size
+    ) %>%
+    mutate(ind = 1:n()) %>%
+    jasmines::unfold_slice(
+      iterations = n_slices, 
+      scale = .5 * 10^-24, 
+      scatter = TRUE, 
+      output1 = "id"
+    ) %>%
+    mutate(
+      x = x + rnorm(n())/500,
+      y = y + rnorm(n())/500
+    ) %>%
+    jasmines::unfold_breeze(
+      iterations = 100,
+      scale = .0002,
+      drift = .0005,
+      fractal = ambient::ridged,
+      octaves = 8
+    ) %>%
+    jasmines::unfold_inside() %>%
+    mutate(val = 1 + (inside>0)*ind)
+  
+  
+  dat$val <- ambient::normalise(dat$val, to = c(1, ncols+1))
+  dat$val <- round(dat$val)
+  
+  dat$shade <- palette_heart[dat$val]
+  
+  dat$x <- (dat$x + shift[1])
+  dat$y <- (dat$y + shift[2])
+  
+  
+  # render the image --------------------------------------------------------
+  
+  cat("image rendering...\n")
+  
+  bg <- palette_base[round(ncols/2)]
+
+  pic <- ggplot(
+    data = raster,
+    mapping = aes(x, y, fill = shade)
+  ) + 
+    
+    # the raster object forms the background
+    geom_raster(alpha = .5) + 
+    
+    # the heart is made of dust/points
+    geom_point(
+      data = dat, 
+      mapping = aes(
+        x = x, 
+        y = y, 
+        color = shade, 
+        alpha = exp(-(time - 1) / 20)
+      ), 
+      inherit.aes = FALSE,
+      show.legend = FALSE,
+      size = .5
+    ) +
+    
+    # bunch of settings...
+    scale_fill_identity() + 
+    scale_colour_identity() + 
+    scale_alpha_identity() + 
+    coord_equal(xlim = c(0, 1), ylim = c(0,1)) + 
+    scale_x_continuous(expand = c(0, 0)) +
+    scale_y_continuous(expand = c(0, 0)) +
+    theme_void() + 
+    theme(
+      panel.background = element_rect(
+        fill = bg, 
+        color = bg
+      )
+    ) +
+    NULL
+  
+  # export image
+  ggsave(
+    filename = output,
+    plot = pic,
+    width = pixels_wide / 300,
+    height = pixels_high / 300,
+    dpi = 300
+  )
+  
+}
+
+seeds <- 1021:1100
+for(seed in seeds) {
+  cat("seed", seed, "\n")
+  heartbleed(seed)
+}

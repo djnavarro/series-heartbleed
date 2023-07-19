@@ -5,3 +5,4 @@
 .DS_Store
 bucket
 series-heartbleed.Rproj
+.Rbuildignore
